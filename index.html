@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Mapa de mi casa - Versión 1.1</title>
+    <title>Mapa de mi casa - Versión 1.2</title>
     <style>
         body { margin: 0; overflow: hidden; }
         canvas { display: block; }
@@ -19,7 +19,7 @@
 </head>
 <body>
 <div id="info">
-    <h3>Datos en tiempo real - Versión 1.1</h3>
+    <h3>Datos en tiempo real - Versión 1.2</h3>
     <p>Pasos: <span id="steps">0</span></p>
     <p>Distancia: <span id="distance">0</span> metros</p>
 </div>
@@ -38,15 +38,14 @@
     let offsetX = width / 2;
     let offsetY = height / 2;
 
-    // Variables para el pedómetro
+    // Variables para el podómetro
     let steps = 0;
     let distance = 0;
     let stepLength = 0.7; // Longitud promedio del paso en metros (ajusta según tu altura)
-    
+
     // Variables para detección de pasos
-    let accMagnitudes = [];
-    let accWindowSize = 50; // Tamaño de la ventana para el cálculo del umbral
-    let threshold = null; // Umbral dinámico
+    let accelData = [];
+    let accelWindowSize = 50;
     let lastStepTime = 0;
     let stepDelay = 400; // Tiempo mínimo entre pasos en ms
 
@@ -98,35 +97,23 @@
     }
 
     function handleMotion(event) {
-        // Aceleración total incluyendo gravedad
-        let ax = event.accelerationIncludingGravity.x || 0;
-        let ay = event.accelerationIncludingGravity.y || 0;
+        let currentTime = Date.now();
+
+        // Aceleración en el eje Z (vertical)
         let az = event.accelerationIncludingGravity.z || 0;
 
-        // Calcular la magnitud de la aceleración
-        let accMagnitude = Math.sqrt(ax * ax + ay * ay + az * az);
-
-        // Añadir la magnitud al array y mantener el tamaño de la ventana
-        accMagnitudes.push(accMagnitude);
-        if (accMagnitudes.length > accWindowSize) {
-            accMagnitudes.shift();
+        // Guardar datos de aceleración
+        accelData.push({ time: currentTime, value: az });
+        if (accelData.length > accelWindowSize) {
+            accelData.shift();
         }
 
-        // Calcular el umbral dinámico basado en el ruido de fondo
-        if (threshold === null && accMagnitudes.length === accWindowSize) {
-            // Asumimos que el dispositivo está en reposo al inicio
-            let mean = accMagnitudes.reduce((a, b) => a + b, 0) / accMagnitudes.length;
-            let variance = accMagnitudes.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / accMagnitudes.length;
-            let stdDev = Math.sqrt(variance);
-            threshold = mean + stdDev * 2; // Establecer el umbral por encima del ruido normal
-            console.log('Umbral establecido en:', threshold.toFixed(2));
-            alert('Calibración completada. Puedes empezar a caminar.');
-        }
+        // Aplicar filtro de paso banda para aislar la frecuencia de los pasos
+        if (accelData.length >= accelWindowSize) {
+            let filteredAccel = bandpassFilter(accelData.map(a => a.value), event.interval || 0.02);
+            let peakIndex = detectStep(filteredAccel);
 
-        if (threshold !== null) {
-            // Detección de picos
-            let currentTime = Date.now();
-            if (accMagnitude > threshold && (currentTime - lastStepTime > stepDelay)) {
+            if (peakIndex !== -1 && (currentTime - lastStepTime > stepDelay)) {
                 steps++;
                 lastStepTime = currentTime;
                 distance = steps * stepLength;
@@ -166,6 +153,49 @@
                 ctx.stroke();
             }
         }
+    }
+
+    function bandpassFilter(signal, dt) {
+        // Parámetros del filtro
+        let fLow = 1; // Frecuencia mínima en Hz
+        let fHigh = 3; // Frecuencia máxima en Hz
+        let RC_low = 1 / (2 * Math.PI * fLow);
+        let RC_high = 1 / (2 * Math.PI * fHigh);
+        let alpha_low = dt / (RC_low + dt);
+        let alpha_high = RC_high / (RC_high + dt);
+
+        let lowPassed = [];
+        let highPassed = [];
+        lowPassed[0] = signal[0];
+        highPassed[0] = signal[0];
+
+        for (let i = 1; i < signal.length; i++) {
+            lowPassed[i] = lowPassed[i - 1] + alpha_low * (signal[i] - lowPassed[i - 1]);
+            highPassed[i] = alpha_high * (highPassed[i - 1] + signal[i] - signal[i - 1]);
+        }
+
+        // La señal filtrada es la diferencia entre las dos
+        let bandPassed = [];
+        for (let i = 0; i < signal.length; i++) {
+            bandPassed[i] = lowPassed[i] - highPassed[i];
+        }
+
+        return bandPassed;
+    }
+
+    function detectStep(filteredAccel) {
+        // Detectar picos en la señal filtrada
+        let peakThreshold = 1.0; // Ajusta este valor según sea necesario
+        for (let i = 1; i < filteredAccel.length - 1; i++) {
+            if (
+                filteredAccel[i] > filteredAccel[i - 1] &&
+                filteredAccel[i] > filteredAccel[i + 1] &&
+                filteredAccel[i] > peakThreshold
+            ) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     function adjustScaleAndOffset() {
