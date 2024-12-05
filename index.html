@@ -1,20 +1,27 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <meta charset="utf-8">
-    <title>Mapa de mi casa - Versión 1.5</title>
+    <title>Detección de pasos con cámara - Versión 2.0</title>
     <style>
         body { margin: 0; overflow: hidden; }
-        canvas { display: block; }
-        #info {
+        #video { display: none; }
+        #canvas {
+            display: block;
             position: absolute;
             top: 0;
             left: 0;
-            background-color: rgba(255, 255, 255, 0.8);
+            z-index: 1;
+        }
+        #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 2;
+            background-color: rgba(0, 0, 0, 0.5);
+            color: white;
             padding: 10px;
             font-family: Arial, sans-serif;
             font-size: 14px;
-            z-index: 2;
         }
         #downloadBtn {
             position: absolute;
@@ -24,254 +31,145 @@
             padding: 10px 20px;
             font-size: 16px;
         }
-        #canvas {
-            position: absolute;
-            top: 0;
-            left: 0;
-            z-index: 1;
-        }
     </style>
 </head>
 <body>
-<div id="info">
-    <h3>Datos en tiempo real - Versión 1.5</h3>
-    <p>Pasos: <span id="steps">0</span></p>
-    <p>Distancia: <span id="distance">0</span> metros</p>
-    <p>Conexión: <span id="connection">Desconocida</span></p>
+<div id="overlay">
+    <h3>Detección de pasos con cámara - Versión 2.0</h3>
+    <p>Pasos detectados: <span id="steps">0</span></p>
+    <button id="downloadBtn">Descargar ruta</button>
 </div>
-<button id="downloadBtn">Descargar ruta</button>
+<video id="video" autoplay playsinline></video>
 <canvas id="canvas"></canvas>
 <script>
-    // Obtener el canvas y ajustar su tamaño
-    let canvas = document.getElementById('canvas');
-    let ctx = canvas.getContext('2d');
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const stepsElem = document.getElementById('steps');
+    const downloadBtn = document.getElementById('downloadBtn');
 
-    function resizeCanvas() {
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
-    }
-    window.addEventListener('resize', resizeCanvas);
-    resizeCanvas();
-
-    let width = canvas.width;
-    let height = canvas.height;
-
-    // Variables de posición y escala
-    let positions = [{ x: 0, y: 0 }];
-    let x = 0, y = 0; // Posición en metros
-    let scale = 1; // Escala para ajustar al canvas
-    let offsetX = width / 2;
-    let offsetY = height / 2;
-
-    // Variables para el podómetro
+    let width, height;
+    let previousFrame = null;
     let steps = 0;
-    let distance = 0;
-    let stepLength = 0.7; // Longitud promedio del paso en metros (ajusta según tu altura)
-
-    // Variables para detección de pasos
-    let accelData = [];
-    let accelWindowSize = 100;
+    let positions = [{ x: 0, y: 0 }];
+    let x = 0, y = 0;
+    let scale = 1;
+    let offsetX = 0;
+    let offsetY = 0;
+    let heading = 0;
     let lastStepTime = 0;
     let stepDelay = 500; // Tiempo mínimo entre pasos en ms
 
-    // Variables para detección de paradas
-    let lastMovementTime = null;
-    let stopDuration = 2000; // Tiempo en ms para considerar una parada
+    // Acceder a la cámara
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+        .then(stream => {
+            video.srcObject = stream;
+            video.onloadedmetadata = () => {
+                init();
+                requestAnimationFrame(processFrame);
+            };
+        })
+        .catch(err => {
+            console.error("Error al acceder a la cámara: ", err);
+            alert("No se pudo acceder a la cámara.");
+        });
 
-    // Variables para calibración
-    let calibrating = true;
-    let calibrationData = [];
-    let calibrationTime = 5000; // 5 segundos para calibrar
-    let calibrationStartTime = null;
-    let noiseMean = 0;
-    let noiseStdDev = 0;
-    let thresholdMultiplier = 3.0; // Multiplicador para establecer el umbral
+    function init() {
+        width = video.videoWidth;
+        height = video.videoHeight;
+        canvas.width = width;
+        canvas.height = height;
+        offsetX = width / 2;
+        offsetY = height / 2;
+    }
 
-    // Variables para orientación
-    let heading = 0; // Rumbo en radianes
+    function processFrame() {
+        try {
+            ctx.drawImage(video, 0, 0, width, height);
+            let currentFrame = ctx.getImageData(0, 0, width, height);
 
-    // Elementos para mostrar los datos
-    let stepsElem = document.getElementById('steps');
-    let distanceElem = document.getElementById('distance');
-    let connectionElem = document.getElementById('connection');
-    let downloadBtn = document.getElementById('downloadBtn');
+            if (previousFrame) {
+                let motionLevel = calculateMotion(previousFrame.data, currentFrame.data);
 
-    // Lista de paradas
-    let stops = [];
+                // Umbral para detección de movimiento
+                let motionThreshold = 10; // Ajusta este valor según sea necesario
 
-    // Solicitar permiso para acceder a los sensores (iOS 13+)
-    function requestPermissions() {
-        if (typeof DeviceMotionEvent.requestPermission === 'function') {
-            DeviceMotionEvent.requestPermission()
-                .then(response => {
-                    if (response == 'granted') {
-                        window.addEventListener('devicemotion', handleMotion);
-                    } else {
-                        alert('Permiso denegado para acceder al acelerómetro.');
+                if (motionLevel > motionThreshold) {
+                    let currentTime = Date.now();
+                    if (currentTime - lastStepTime > stepDelay) {
+                        steps++;
+                        lastStepTime = currentTime;
+
+                        // Actualizar posición (asumiendo movimiento en dirección fija)
+                        let stepLength = 0.7; // Longitud promedio del paso en metros
+                        heading = 0; // Puedes actualizar el heading si obtienes orientación
+
+                        x += stepLength * Math.cos(heading);
+                        y += stepLength * Math.sin(heading);
+                        positions.push({ x: x, y: y });
+
+                        stepsElem.textContent = steps;
+
+                        adjustScaleAndOffset();
+                        drawRoute();
                     }
-                })
-                .catch(console.error);
-        } else {
-            window.addEventListener('devicemotion', handleMotion);
-        }
-
-        if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-            DeviceOrientationEvent.requestPermission()
-                .then(response => {
-                    if (response == 'granted') {
-                        window.addEventListener('deviceorientation', handleOrientation);
-                    } else {
-                        alert('Permiso denegado para acceder a la orientación.');
-                    }
-                })
-                .catch(console.error);
-        } else {
-            window.addEventListener('deviceorientation', handleOrientation);
-        }
-    }
-
-    requestPermissions();
-
-    function handleOrientation(event) {
-        // Obtener el ángulo alpha (rumbo) en grados
-        if (event.absolute || event.alpha !== null) {
-            heading = event.alpha; // En grados
-        }
-    }
-
-    function handleMotion(event) {
-        let currentTime = Date.now();
-
-        // Aceleración en el eje Z (vertical)
-        let az = event.accelerationIncludingGravity.z || 0;
-
-        if (calibrating) {
-            // Fase de calibración
-            if (calibrationStartTime === null) {
-                calibrationStartTime = currentTime;
-                alert('Calibración iniciada. Por favor, mantén el dispositivo quieto durante 5 segundos.');
+                }
             }
 
-            calibrationData.push(az);
-
-            if (currentTime - calibrationStartTime >= calibrationTime) {
-                // Calibración completada
-                noiseMean = calibrationData.reduce((a, b) => a + b, 0) / calibrationData.length;
-                let variance = calibrationData.reduce((sum, value) => sum + Math.pow(value - noiseMean, 2), 0) / calibrationData.length;
-                noiseStdDev = Math.sqrt(variance);
-                calibrating = false;
-                alert('Calibración completada. Puedes comenzar a caminar.');
-            }
-            return;
+            previousFrame = currentFrame;
+        } catch (e) {
+            console.error(e);
         }
 
-        // Guardar datos de aceleración
-        accelData.push({ time: currentTime, value: az });
-        if (accelData.length > accelWindowSize) {
-            accelData.shift();
-        }
+        requestAnimationFrame(processFrame);
+    }
 
-        // Aplicar filtro de paso banda para aislar la frecuencia de los pasos
-        if (accelData.length >= accelWindowSize) {
-            let filteredAccel = bandpassFilter(accelData.map(a => a.value - noiseMean), event.interval || 0.02);
-            let peakIndex = detectStep(filteredAccel);
+    function calculateMotion(prevData, currData) {
+        let motion = 0;
+        for (let i = 0; i < prevData.length; i += 4) {
+            let rDiff = Math.abs(currData[i] - prevData[i]);
+            let gDiff = Math.abs(currData[i + 1] - prevData[i + 1]);
+            let bDiff = Math.abs(currData[i + 2] - prevData[i + 2]);
+            let avgDiff = (rDiff + gDiff + bDiff) / 3;
 
-            if (peakIndex !== -1 && (currentTime - lastStepTime > stepDelay)) {
-                steps++;
-                lastStepTime = currentTime;
-                lastMovementTime = currentTime;
-                distance = steps * stepLength;
-
-                // Convertir el heading a radianes y ajustar
-                let headingRad = heading * Math.PI / 180;
-
-                // Actualizar la posición en función del heading
-                x += stepLength * Math.sin(headingRad);
-                y -= stepLength * Math.cos(headingRad); // Restar porque el eje Y en pantalla va hacia abajo
-
-                positions.push({ x: x, y: y });
-
-                // Actualizar los elementos HTML
-                stepsElem.textContent = steps;
-                distanceElem.textContent = distance.toFixed(2);
-
-                // Ajustar escala y offset
-                adjustScaleAndOffset();
-
-                // Dibujar en el canvas
-                drawCanvas();
-            } else if (lastMovementTime && (currentTime - lastMovementTime > stopDuration)) {
-                // Se ha detectado una parada
-                lastMovementTime = null;
-                checkInternetConnection(x, y);
+            if (avgDiff > 20) { // Umbral para considerar movimiento en un píxel
+                motion++;
             }
         }
+        // Retornar porcentaje de píxeles con movimiento
+        return (motion / (prevData.length / 4)) * 100;
     }
 
-    function bandpassFilter(signal, dt) {
-        // Parámetros del filtro
-        let fLow = 1; // Frecuencia mínima en Hz
-        let fHigh = 3; // Frecuencia máxima en Hz
-        let RC_low = 1 / (2 * Math.PI * fLow);
-        let RC_high = 1 / (2 * Math.PI * fHigh);
-        let alpha_low = dt / (RC_low + dt);
-        let alpha_high = RC_high / (RC_high + dt);
+    function adjustScaleAndOffset() {
+        let allX = positions.map(p => p.x);
+        let allY = positions.map(p => p.y);
+        let minX = Math.min(...allX);
+        let maxX = Math.max(...allX);
+        let minY = Math.min(...allY);
+        let maxY = Math.max(...allY);
 
-        let lowPassed = [];
-        let highPassed = [];
-        lowPassed[0] = signal[0];
-        highPassed[0] = signal[0];
+        let dataWidth = maxX - minX;
+        let dataHeight = maxY - minY;
 
-        for (let i = 1; i < signal.length; i++) {
-            lowPassed[i] = lowPassed[i - 1] + alpha_low * (signal[i] - lowPassed[i - 1]);
-            highPassed[i] = alpha_high * (highPassed[i - 1] + signal[i] - signal[i - 1]);
-        }
+        let margin = 40;
 
-        // La señal filtrada es la diferencia entre las dos
-        let bandPassed = [];
-        for (let i = 0; i < signal.length; i++) {
-            bandPassed[i] = lowPassed[i] - highPassed[i];
-        }
+        scale = Math.min(
+            (canvas.width - 2 * margin) / dataWidth || 1,
+            (canvas.height - 2 * margin) / dataHeight || 1
+        );
 
-        return bandPassed;
+        scale = Math.min(scale, 100);
+        scale = Math.max(scale, 1);
+
+        offsetX = - (minX + maxX) / 2 * scale + canvas.width / 2;
+        offsetY = - (minY + maxY) / 2 * scale + canvas.height / 2;
     }
 
-    function detectStep(filteredAccel) {
-        // Detectar picos en la señal filtrada
-        let peakThreshold = noiseStdDev * thresholdMultiplier; // Umbral basado en el ruido
-        for (let i = 1; i < filteredAccel.length - 1; i++) {
-            if (
-                filteredAccel[i] > filteredAccel[i - 1] &&
-                filteredAccel[i] > filteredAccel[i + 1] &&
-                filteredAccel[i] > peakThreshold
-            ) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    function checkInternetConnection(posX, posY) {
-        // Intentar realizar una solicitud a un recurso externo
-        fetch('https://www.google.com/favicon.ico', { method: 'HEAD', mode: 'no-cors' })
-            .then(() => {
-                // Conexión exitosa
-                connectionElem.textContent = 'Conectado';
-                stops.push({ x: posX, y: posY, status: 'Conectado' });
-                drawCanvas();
-            })
-            .catch(() => {
-                // Sin conexión
-                connectionElem.textContent = 'Sin conexión';
-                stops.push({ x: posX, y: posY, status: 'Sin conexión' });
-                drawCanvas();
-            });
-    }
-
-    function drawCanvas() {
+    function drawRoute() {
+        // Limpiar el canvas
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // Dibujar la trayectoria
+        // Dibujar la ruta
         ctx.beginPath();
         for (let i = 0; i < positions.length; i++) {
             let px = positions[i].x * scale + offsetX;
@@ -282,56 +180,9 @@
                 ctx.lineTo(px, py);
             }
         }
-        ctx.strokeStyle = 'blue';
+        ctx.strokeStyle = 'red';
         ctx.lineWidth = 2;
         ctx.stroke();
-
-        // Dibujar las paradas con el estado de conexión
-        for (let stop of stops) {
-            let px = stop.x * scale + offsetX;
-            let py = stop.y * scale + offsetY;
-            ctx.beginPath();
-            ctx.arc(px, py, 10, 0, 2 * Math.PI); // Radio aumentado a 10
-            ctx.fillStyle = stop.status === 'Conectado' ? 'green' : 'red';
-            ctx.fill();
-            ctx.strokeStyle = 'black';
-            ctx.stroke();
-
-            // Añadir texto con el estado de conexión
-            ctx.fillStyle = 'black';
-            ctx.font = '12px Arial';
-            ctx.fillText(stop.status, px + 12, py + 4);
-        }
-    }
-
-    function adjustScaleAndOffset() {
-        // Calcular los límites de las posiciones
-        let allX = positions.map(p => p.x).concat(stops.map(s => s.x));
-        let allY = positions.map(p => p.y).concat(stops.map(s => s.y));
-        let minX = Math.min(...allX);
-        let maxX = Math.max(...allX);
-        let minY = Math.min(...allY);
-        let maxY = Math.max(...allY);
-
-        let dataWidth = maxX - minX;
-        let dataHeight = maxY - minY;
-
-        // Agregar un margen
-        let margin = 40;
-
-        // Calcular la escala para ajustar al canvas
-        scale = Math.min(
-            (canvas.width - 2 * margin) / dataWidth || 1,
-            (canvas.height - 2 * margin) / dataHeight || 1
-        );
-
-        // Evitar escalas demasiado grandes o pequeñas
-        scale = Math.min(scale, 100);
-        scale = Math.max(scale, 1);
-
-        // Calcular el offset para centrar el dibujo
-        offsetX = - (minX + maxX) / 2 * scale + canvas.width / 2;
-        offsetY = - (minY + maxY) / 2 * scale + canvas.height / 2;
     }
 
     // Función para descargar la ruta como imagen
@@ -341,7 +192,6 @@
         link.href = canvas.toDataURL('image/png');
         link.click();
     });
-
 </script>
 </body>
 </html>
