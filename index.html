@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Mapa de mi casa</title>
+    <title>Mapa de mi casa - Pedómetro</title>
     <style>
         body { margin: 0; overflow: hidden; }
         canvas { display: block; }
@@ -20,9 +20,8 @@
 <body>
 <div id="info">
     <h3>Datos en tiempo real</h3>
-    <p>Posición: (<span id="posX">0</span>, <span id="posY">0</span>) metros</p>
-    <p>Velocidad: (<span id="velX">0</span>, <span id="velY">0</span>) m/s</p>
-    <p>Aceleración: (<span id="accX">0</span>, <span id="accY">0</span>) m/s²</p>
+    <p>Pasos: <span id="steps">0</span></p>
+    <p>Distancia: <span id="distance">0</span> metros</p>
 </div>
 <canvas id="canvas"></canvas>
 <script>
@@ -33,26 +32,22 @@
     let height = canvas.height = window.innerHeight;
     
     // Variables de posición y escala
-    let positions = [];
+    let positions = [{ x: 0, y: 0 }];
     let x = 0, y = 0; // Posición en metros
-    let scale = 1; // Escala para ajustar al canvas
+    let scale = 50; // Escala para ajustar al canvas
     let offsetX = width / 2;
     let offsetY = height / 2;
 
-    // Variables de velocidad y aceleración
-    let vx = 0, vy = 0;
-    let ax = 0, ay = 0;
-    let orientation = 0;
-    let lastTime = null;
-    let alpha = 0.9; // Factor para el filtro complementario
+    // Variables para el pedómetro
+    let steps = 0;
+    let distance = 0;
+    let stepLength = 0.7; // Longitud promedio del paso en metros (ajusta según tu altura)
+    let lastAcceleration = 0;
+    let threshold = 1.2; // Umbral para detección de pasos
 
     // Elementos para mostrar los datos
-    let posXElem = document.getElementById('posX');
-    let posYElem = document.getElementById('posY');
-    let velXElem = document.getElementById('velX');
-    let velYElem = document.getElementById('velY');
-    let accXElem = document.getElementById('accX');
-    let accYElem = document.getElementById('accY');
+    let stepsElem = document.getElementById('steps');
+    let distanceElem = document.getElementById('distance');
 
     // Solicitar permiso para acceder a los sensores (iOS 13+)
     function requestPermissions() {
@@ -69,124 +64,54 @@
         } else {
             window.addEventListener('devicemotion', handleMotion);
         }
-
-        if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-            DeviceOrientationEvent.requestPermission()
-                .then(response => {
-                    if (response == 'granted') {
-                        window.addEventListener('deviceorientationabsolute', handleOrientation);
-                    } else {
-                        alert('Permiso denegado para acceder al giroscopio.');
-                    }
-                })
-                .catch(console.error);
-        } else {
-            window.addEventListener('deviceorientationabsolute', handleOrientation);
-        }
     }
 
     requestPermissions();
 
-    function handleOrientation(event) {
-        // Usar la orientación absoluta para obtener el ángulo respecto al norte verdadero
-        if (event.absolute) {
-            orientation = event.alpha || 0; // En grados
-        }
-    }
-
     function handleMotion(event) {
-        let currentTime = Date.now();
-        if (lastTime) {
-            let dt = (currentTime - lastTime) / 1000; // Convertir a segundos
+        // Aceleración total
+        let ax = event.accelerationIncludingGravity.x || 0;
+        let ay = event.accelerationIncludingGravity.y || 0;
+        let az = event.accelerationIncludingGravity.z || 0;
 
-            // Aceleración sin gravedad
-            let axRaw = event.acceleration.x || 0;
-            let ayRaw = event.acceleration.y || 0;
+        // Magnitud de la aceleración
+        let accMagnitude = Math.sqrt(ax * ax + ay * ay + az * az);
 
-            // Aplicar filtro complementario
-            ax = alpha * ax + (1 - alpha) * axRaw;
-            ay = alpha * ay + (1 - alpha) * ayRaw;
+        // Detección de pasos sencilla
+        if (accMagnitude - lastAcceleration > threshold) {
+            steps++;
+            distance = steps * stepLength;
 
-            // Actualizar los elementos HTML con los datos de aceleración
-            accXElem.textContent = ax.toFixed(2);
-            accYElem.textContent = ay.toFixed(2);
+            // Calcular la nueva posición (asumiendo movimiento en línea recta)
+            x += stepLength * Math.cos(0); // Ángulo fijo, podrías actualizarlo si tienes orientación
+            y += stepLength * Math.sin(0);
 
-            // Convertir orientación a radianes
-            let angleRad = orientation * Math.PI / 180;
-
-            // Rotar la aceleración al marco de referencia global
-            let axGlobal = ax * Math.cos(angleRad) - ay * Math.sin(angleRad);
-            let ayGlobal = ax * Math.sin(angleRad) + ay * Math.cos(angleRad);
-
-            // Integrar la aceleración para obtener la velocidad
-            vx += axGlobal * dt;
-            vy += ayGlobal * dt;
-
-            // Actualizar los elementos HTML con los datos de velocidad
-            velXElem.textContent = vx.toFixed(2);
-            velYElem.textContent = vy.toFixed(2);
-
-            // Integrar la velocidad para obtener la posición
-            x += vx * dt;
-            y += vy * dt;
-
-            // Guardar las posiciones para ajustar la escala
             positions.push({ x: x, y: y });
 
-            // Actualizar los elementos HTML con los datos de posición
-            posXElem.textContent = x.toFixed(2);
-            posYElem.textContent = y.toFixed(2);
-
-            // Ajustar escala y offset para mantener el dibujo dentro del canvas
-            adjustScaleAndOffset();
-
-            // Limpiar el canvas
-            ctx.clearRect(0, 0, width, height);
-
-            // Dibujar la trayectoria
-            ctx.beginPath();
-            for (let i = 0; i < positions.length; i++) {
-                let px = positions[i].x * scale + offsetX;
-                let py = positions[i].y * scale + offsetY;
-                if (i === 0) {
-                    ctx.moveTo(px, py);
-                } else {
-                    ctx.lineTo(px, py);
-                }
-            }
-            ctx.strokeStyle = 'blue';
-            ctx.lineWidth = 2;
-            ctx.stroke();
-
+            // Actualizar los elementos HTML
+            stepsElem.textContent = steps;
+            distanceElem.textContent = distance.toFixed(2);
         }
-        lastTime = currentTime;
-    }
 
-    function adjustScaleAndOffset() {
-        // Calcular los límites de las posiciones
-        let minX = Math.min(...positions.map(p => p.x));
-        let maxX = Math.max(...positions.map(p => p.x));
-        let minY = Math.min(...positions.map(p => p.y));
-        let maxY = Math.max(...positions.map(p => p.y));
+        lastAcceleration = accMagnitude;
 
-        let dataWidth = maxX - minX;
-        let dataHeight = maxY - minY;
+        // Limpiar el canvas
+        ctx.clearRect(0, 0, width, height);
 
-        // Agregar un margen
-        let margin = 20;
-
-        // Calcular la escala para ajustar al canvas
-        scale = Math.min(
-            (width - 2 * margin) / dataWidth || 1,
-            (height - 2 * margin) / dataHeight || 1
-        );
-
-        // Evitar escalas demasiado grandes
-        scale = Math.min(scale, 100);
-
-        // Calcular el offset para centrar el dibujo
-        offsetX = - (minX + maxX) / 2 * scale + width / 2;
-        offsetY = - (minY + maxY) / 2 * scale + height / 2;
+        // Dibujar la trayectoria
+        ctx.beginPath();
+        for (let i = 0; i < positions.length; i++) {
+            let px = positions[i].x * scale + offsetX;
+            let py = positions[i].y * scale + offsetY;
+            if (i === 0) {
+                ctx.moveTo(px, py);
+            } else {
+                ctx.lineTo(px, py);
+            }
+        }
+        ctx.strokeStyle = 'blue';
+        ctx.lineWidth = 2;
+        ctx.stroke();
     }
 
 </script>
