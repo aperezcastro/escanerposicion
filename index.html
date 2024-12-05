@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Mapa de mi casa - Versión 1.4</title>
+    <title>Mapa de mi casa - Versión 1.5</title>
     <style>
         body { margin: 0; overflow: hidden; }
         canvas { display: block; }
@@ -14,24 +14,48 @@
             padding: 10px;
             font-family: Arial, sans-serif;
             font-size: 14px;
+            z-index: 2;
+        }
+        #downloadBtn {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 2;
+            padding: 10px 20px;
+            font-size: 16px;
+        }
+        #canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
         }
     </style>
 </head>
 <body>
 <div id="info">
-    <h3>Datos en tiempo real - Versión 1.4</h3>
+    <h3>Datos en tiempo real - Versión 1.5</h3>
     <p>Pasos: <span id="steps">0</span></p>
     <p>Distancia: <span id="distance">0</span> metros</p>
     <p>Conexión: <span id="connection">Desconocida</span></p>
 </div>
+<button id="downloadBtn">Descargar ruta</button>
 <canvas id="canvas"></canvas>
 <script>
     // Obtener el canvas y ajustar su tamaño
     let canvas = document.getElementById('canvas');
     let ctx = canvas.getContext('2d');
-    let width = canvas.width = window.innerWidth;
-    let height = canvas.height = window.innerHeight;
-    
+
+    function resizeCanvas() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    let width = canvas.width;
+    let height = canvas.height;
+
     // Variables de posición y escala
     let positions = [{ x: 0, y: 0 }];
     let x = 0, y = 0; // Posición en metros
@@ -48,11 +72,11 @@
     let accelData = [];
     let accelWindowSize = 100;
     let lastStepTime = 0;
-    let stepDelay = 400; // Tiempo mínimo entre pasos en ms
+    let stepDelay = 500; // Tiempo mínimo entre pasos en ms
 
     // Variables para detección de paradas
     let lastMovementTime = null;
-    let stopDuration = 3000; // Tiempo en ms para considerar una parada
+    let stopDuration = 2000; // Tiempo en ms para considerar una parada
 
     // Variables para calibración
     let calibrating = true;
@@ -61,7 +85,7 @@
     let calibrationStartTime = null;
     let noiseMean = 0;
     let noiseStdDev = 0;
-    let thresholdMultiplier = 2.5; // Multiplicador para establecer el umbral
+    let thresholdMultiplier = 3.0; // Multiplicador para establecer el umbral
 
     // Variables para orientación
     let heading = 0; // Rumbo en radianes
@@ -70,6 +94,7 @@
     let stepsElem = document.getElementById('steps');
     let distanceElem = document.getElementById('distance');
     let connectionElem = document.getElementById('connection');
+    let downloadBtn = document.getElementById('downloadBtn');
 
     // Lista de paradas
     let stops = [];
@@ -173,7 +198,7 @@
                 // Ajustar escala y offset
                 adjustScaleAndOffset();
 
-                // Limpiar el canvas
+                // Dibujar en el canvas
                 drawCanvas();
             } else if (lastMovementTime && (currentTime - lastMovementTime > stopDuration)) {
                 // Se ha detectado una parada
@@ -244,7 +269,7 @@
     }
 
     function drawCanvas() {
-        ctx.clearRect(0, 0, width, height);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
 
         // Dibujar la trayectoria
         ctx.beginPath();
@@ -266,31 +291,38 @@
             let px = stop.x * scale + offsetX;
             let py = stop.y * scale + offsetY;
             ctx.beginPath();
-            ctx.arc(px, py, 5, 0, 2 * Math.PI);
+            ctx.arc(px, py, 10, 0, 2 * Math.PI); // Radio aumentado a 10
             ctx.fillStyle = stop.status === 'Conectado' ? 'green' : 'red';
             ctx.fill();
             ctx.strokeStyle = 'black';
             ctx.stroke();
+
+            // Añadir texto con el estado de conexión
+            ctx.fillStyle = 'black';
+            ctx.font = '12px Arial';
+            ctx.fillText(stop.status, px + 12, py + 4);
         }
     }
 
     function adjustScaleAndOffset() {
         // Calcular los límites de las posiciones
-        let minX = Math.min(...positions.map(p => p.x), ...stops.map(s => s.x));
-        let maxX = Math.max(...positions.map(p => p.x), ...stops.map(s => s.x));
-        let minY = Math.min(...positions.map(p => p.y), ...stops.map(s => s.y));
-        let maxY = Math.max(...positions.map(p => p.y), ...stops.map(s => s.y));
+        let allX = positions.map(p => p.x).concat(stops.map(s => s.x));
+        let allY = positions.map(p => p.y).concat(stops.map(s => s.y));
+        let minX = Math.min(...allX);
+        let maxX = Math.max(...allX);
+        let minY = Math.min(...allY);
+        let maxY = Math.max(...allY);
 
         let dataWidth = maxX - minX;
         let dataHeight = maxY - minY;
 
         // Agregar un margen
-        let margin = 20;
+        let margin = 40;
 
         // Calcular la escala para ajustar al canvas
         scale = Math.min(
-            (width - 2 * margin) / dataWidth || 1,
-            (height - 2 * margin) / dataHeight || 1
+            (canvas.width - 2 * margin) / dataWidth || 1,
+            (canvas.height - 2 * margin) / dataHeight || 1
         );
 
         // Evitar escalas demasiado grandes o pequeñas
@@ -298,9 +330,17 @@
         scale = Math.max(scale, 1);
 
         // Calcular el offset para centrar el dibujo
-        offsetX = - (minX + maxX) / 2 * scale + width / 2;
-        offsetY = - (minY + maxY) / 2 * scale + height / 2;
+        offsetX = - (minX + maxX) / 2 * scale + canvas.width / 2;
+        offsetY = - (minY + maxY) / 2 * scale + canvas.height / 2;
     }
+
+    // Función para descargar la ruta como imagen
+    downloadBtn.addEventListener('click', () => {
+        let link = document.createElement('a');
+        link.download = 'ruta.png';
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+    });
 
 </script>
 </body>
