@@ -30,13 +30,16 @@
         const scale = 50; // Relación inicial: 50 píxeles = 1 metro
         const threshold = 0.02; // Umbral para filtrar el ruido
 
-        // Límites para escalado automático (deben inicializarse antes de su uso)
+        // Límites para escalado automático
         let bounds = {
             minX: position.x,
             minY: position.y,
             maxX: position.x,
             maxY: position.y
         };
+
+        let acceleration = { x: 0, y: 0 };
+        let orientation = 0; // Orientación en grados
 
         // Ajustar el tamaño del canvas a la pantalla
         function resizeCanvas() {
@@ -52,7 +55,13 @@
             return lastValue + alpha * (value - lastValue);
         }
 
-        let acceleration = { x: 0, y: 0 };
+        // Convierte aceleración relativa a global
+        function transformToGlobalCoordinates(ax, ay, orientation) {
+            const rad = (Math.PI / 180) * orientation; // Convierte orientación a radianes
+            const gx = ax * Math.cos(rad) - ay * Math.sin(rad); // Transformación
+            const gy = ax * Math.sin(rad) + ay * Math.cos(rad);
+            return { x: gx, y: gy };
+        }
 
         // Dibuja la trayectoria y la leyenda
         function drawPath() {
@@ -119,9 +128,12 @@
                     return;
                 }
 
+                // Transformar aceleración a coordenadas globales
+                const globalAcc = transformToGlobalCoordinates(acceleration.x, acceleration.y, orientation);
+
                 // Calcular el desplazamiento
-                const deltaX = acceleration.x * deltaTime * deltaTime * scale;
-                const deltaY = acceleration.y * deltaTime * deltaTime * scale;
+                const deltaX = globalAcc.x * deltaTime * deltaTime * scale;
+                const deltaY = globalAcc.y * deltaTime * deltaTime * scale;
 
                 // Actualizar posición
                 position.x += deltaX;
@@ -139,6 +151,11 @@
                 // Redibujar la trayectoria
                 drawPath();
             }
+        });
+
+        // Obtener orientación del dispositivo
+        window.addEventListener('deviceorientation', (event) => {
+            orientation = event.alpha || 0; // Orientación en grados
         });
 
         // Dibuja la trayectoria inicial
