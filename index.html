@@ -3,70 +3,109 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Movimiento en un Plano</title>
+    <title>Mapa de Movimiento con Escalado Automático</title>
     <style>
         canvas {
             border: 1px solid black;
             display: block;
             margin: 20px auto;
+            background-color: #f9f9f9;
+        }
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
         }
     </style>
 </head>
 <body>
-    <h1 style="text-align: center;">Movimiento en el Plano</h1>
-    <canvas id="canvas" width="500" height="500"></canvas>
-    <p style="text-align: center;">Mueve el dispositivo para ver cómo se rastrea tu posición.</p>
+    <h1>Mapa de Movimiento con Escalado Automático</h1>
+    <canvas id="canvas" width="800" height="800"></canvas>
+    <p>Mueve tu móvil para ver cómo se dibuja tu trayectoria con escalado dinámico.</p>
 
     <script>
-        // Configuración inicial
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
 
-        let position = { x: canvas.width / 2, y: canvas.height / 2 }; // Posición inicial (centro del canvas)
+        // Configuración inicial
+        let position = { x: 0, y: 0 }; // Posición inicial en "metros"
         let velocity = { x: 0, y: 0 }; // Velocidad inicial
-        let orientation = 0; // Orientación en radianes (0 es hacia la derecha)
-        const scale = 5; // Escala para los movimientos
+        let lastUpdate = Date.now(); // Tiempo de la última actualización
+        const scaleFactor = 50; // Relación inicial: 50 píxeles = 1 metro
+        let path = [{ x: 0, y: 0 }]; // Registro de posiciones
+        let bounds = { minX: 0, minY: 0, maxX: 0, maxY: 0 }; // Límites del dibujo
 
-        // Dibuja el punto inicial
-        function drawPoint(x, y) {
-            ctx.clearRect(0, 0, canvas.width, canvas.height); // Limpia el canvas
+        // Dibuja la trayectoria ajustada al canvas
+        function drawPath() {
+            const width = canvas.width;
+            const height = canvas.height;
+
+            // Calcula los límites actuales
+            const pathWidth = bounds.maxX - bounds.minX;
+            const pathHeight = bounds.maxY - bounds.minY;
+
+            // Calcula el factor de escala dinámico
+            const scaleX = width / pathWidth;
+            const scaleY = height / pathHeight;
+            const scale = Math.min(scaleX, scaleY) * 0.9; // Escala para ajustarse al canvas con margen
+
+            // Centro de la vista ajustada
+            const offsetX = (width - pathWidth * scale) / 2 - bounds.minX * scale;
+            const offsetY = (height - pathHeight * scale) / 2 - bounds.minY * scale;
+
+            // Limpia el canvas
+            ctx.clearRect(0, 0, width, height);
+
+            // Dibuja la trayectoria
             ctx.beginPath();
-            ctx.arc(x, y, 5, 0, Math.PI * 2);
-            ctx.fillStyle = 'blue';
-            ctx.fill();
-            ctx.closePath();
+            ctx.strokeStyle = "blue";
+            ctx.lineWidth = 2;
+
+            path.forEach((point, index) => {
+                const x = point.x * scale + offsetX;
+                const y = point.y * scale + offsetY;
+                if (index === 0) {
+                    ctx.moveTo(x, y);
+                } else {
+                    ctx.lineTo(x, y);
+                }
+            });
+
+            ctx.stroke();
         }
 
         // Procesa los datos de movimiento
         window.addEventListener('devicemotion', (event) => {
             const acceleration = event.acceleration;
-            const rotationRate = event.rotationRate;
+            const currentTime = Date.now();
+            const deltaTime = (currentTime - lastUpdate) / 1000; // Diferencia de tiempo en segundos
+            lastUpdate = currentTime;
 
-            // Actualiza la orientación basada en el giroscopio
-            if (rotationRate && rotationRate.alpha) {
-                orientation += (rotationRate.alpha * Math.PI / 180) * 0.01; // Convertimos a radianes y ajustamos la sensibilidad
-            }
+            if (acceleration.x !== null && acceleration.y !== null) {
+                // Calcula la velocidad usando la aceleración (v = u + at)
+                velocity.x += acceleration.x * deltaTime;
+                velocity.y += acceleration.y * deltaTime;
 
-            // Calcula el cambio de posición basado en la aceleración
-            if (acceleration.x && acceleration.y) {
-                velocity.x += acceleration.x * scale;
-                velocity.y += acceleration.y * scale;
+                // Calcula el cambio de posición (s = v * t)
+                const deltaX = velocity.x * deltaTime;
+                const deltaY = velocity.y * deltaTime;
 
-                // Actualiza la posición en el plano
-                position.x += Math.cos(orientation) * velocity.x;
-                position.y += Math.sin(orientation) * velocity.y;
+                // Actualiza la posición en "metros"
+                position.x += deltaX;
+                position.y += deltaY;
 
-                // Asegúrate de que no se salga del canvas
-                position.x = Math.max(0, Math.min(canvas.width, position.x));
-                position.y = Math.max(0, Math.min(canvas.height, position.y));
+                // Registra la nueva posición
+                path.push({ x: position.x, y: position.y });
 
-                // Dibuja la nueva posición
-                drawPoint(position.x, position.y);
+                // Actualiza los límites del recorrido
+                bounds.minX = Math.min(bounds.minX, position.x);
+                bounds.minY = Math.min(bounds.minY, position.y);
+                bounds.maxX = Math.max(bounds.maxX, position.x);
+                bounds.maxY = Math.max(bounds.maxY, position.y);
+
+                // Redibuja la trayectoria con el nuevo escalado
+                drawPath();
             }
         });
-
-        // Dibuja el punto inicial
-        drawPoint(position.x, position.y);
     </script>
 </body>
 </html>
