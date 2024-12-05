@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Mapa de mi casa - Versión 1.3</title>
+    <title>Mapa de mi casa - Versión 1.4</title>
     <style>
         body { margin: 0; overflow: hidden; }
         canvas { display: block; }
@@ -19,9 +19,10 @@
 </head>
 <body>
 <div id="info">
-    <h3>Datos en tiempo real - Versión 1.3</h3>
+    <h3>Datos en tiempo real - Versión 1.4</h3>
     <p>Pasos: <span id="steps">0</span></p>
     <p>Distancia: <span id="distance">0</span> metros</p>
+    <p>Conexión: <span id="connection">Desconocida</span></p>
 </div>
 <canvas id="canvas"></canvas>
 <script>
@@ -49,6 +50,10 @@
     let lastStepTime = 0;
     let stepDelay = 400; // Tiempo mínimo entre pasos en ms
 
+    // Variables para detección de paradas
+    let lastMovementTime = null;
+    let stopDuration = 3000; // Tiempo en ms para considerar una parada
+
     // Variables para calibración
     let calibrating = true;
     let calibrationData = [];
@@ -64,6 +69,10 @@
     // Elementos para mostrar los datos
     let stepsElem = document.getElementById('steps');
     let distanceElem = document.getElementById('distance');
+    let connectionElem = document.getElementById('connection');
+
+    // Lista de paradas
+    let stops = [];
 
     // Solicitar permiso para acceder a los sensores (iOS 13+)
     function requestPermissions() {
@@ -145,6 +154,7 @@
             if (peakIndex !== -1 && (currentTime - lastStepTime > stepDelay)) {
                 steps++;
                 lastStepTime = currentTime;
+                lastMovementTime = currentTime;
                 distance = steps * stepLength;
 
                 // Convertir el heading a radianes y ajustar
@@ -164,22 +174,11 @@
                 adjustScaleAndOffset();
 
                 // Limpiar el canvas
-                ctx.clearRect(0, 0, width, height);
-
-                // Dibujar la trayectoria
-                ctx.beginPath();
-                for (let i = 0; i < positions.length; i++) {
-                    let px = positions[i].x * scale + offsetX;
-                    let py = positions[i].y * scale + offsetY;
-                    if (i === 0) {
-                        ctx.moveTo(px, py);
-                    } else {
-                        ctx.lineTo(px, py);
-                    }
-                }
-                ctx.strokeStyle = 'blue';
-                ctx.lineWidth = 2;
-                ctx.stroke();
+                drawCanvas();
+            } else if (lastMovementTime && (currentTime - lastMovementTime > stopDuration)) {
+                // Se ha detectado una parada
+                lastMovementTime = null;
+                checkInternetConnection(x, y);
             }
         }
     }
@@ -227,12 +226,60 @@
         return -1;
     }
 
+    function checkInternetConnection(posX, posY) {
+        // Intentar realizar una solicitud a un recurso externo
+        fetch('https://www.google.com/favicon.ico', { method: 'HEAD', mode: 'no-cors' })
+            .then(() => {
+                // Conexión exitosa
+                connectionElem.textContent = 'Conectado';
+                stops.push({ x: posX, y: posY, status: 'Conectado' });
+                drawCanvas();
+            })
+            .catch(() => {
+                // Sin conexión
+                connectionElem.textContent = 'Sin conexión';
+                stops.push({ x: posX, y: posY, status: 'Sin conexión' });
+                drawCanvas();
+            });
+    }
+
+    function drawCanvas() {
+        ctx.clearRect(0, 0, width, height);
+
+        // Dibujar la trayectoria
+        ctx.beginPath();
+        for (let i = 0; i < positions.length; i++) {
+            let px = positions[i].x * scale + offsetX;
+            let py = positions[i].y * scale + offsetY;
+            if (i === 0) {
+                ctx.moveTo(px, py);
+            } else {
+                ctx.lineTo(px, py);
+            }
+        }
+        ctx.strokeStyle = 'blue';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Dibujar las paradas con el estado de conexión
+        for (let stop of stops) {
+            let px = stop.x * scale + offsetX;
+            let py = stop.y * scale + offsetY;
+            ctx.beginPath();
+            ctx.arc(px, py, 5, 0, 2 * Math.PI);
+            ctx.fillStyle = stop.status === 'Conectado' ? 'green' : 'red';
+            ctx.fill();
+            ctx.strokeStyle = 'black';
+            ctx.stroke();
+        }
+    }
+
     function adjustScaleAndOffset() {
         // Calcular los límites de las posiciones
-        let minX = Math.min(...positions.map(p => p.x));
-        let maxX = Math.max(...positions.map(p => p.x));
-        let minY = Math.min(...positions.map(p => p.y));
-        let maxY = Math.max(...positions.map(p => p.y));
+        let minX = Math.min(...positions.map(p => p.x), ...stops.map(s => s.x));
+        let maxX = Math.max(...positions.map(p => p.x), ...stops.map(s => s.x));
+        let minY = Math.min(...positions.map(p => p.y), ...stops.map(s => s.y));
+        let maxY = Math.max(...positions.map(p => p.y), ...stops.map(s => s.y));
 
         let dataWidth = maxX - minX;
         let dataHeight = maxY - minY;
