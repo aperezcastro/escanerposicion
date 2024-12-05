@@ -3,66 +3,76 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mapa de Movimiento con Escalado Automático</title>
+    <title>Mapa de Movimiento</title>
     <style>
-        canvas {
-            border: 1px solid black;
-            display: block;
-            margin: 20px auto;
-            background-color: #f9f9f9;
-        }
         body {
-            font-family: Arial, sans-serif;
-            text-align: center;
+            margin: 0;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            background-color: #f9f9f9;
         }
     </style>
 </head>
 <body>
-    <h1>Mapa de Movimiento con Escalado Automático</h1>
-    <canvas id="canvas" width="800" height="800"></canvas>
-    <p>Mueve tu móvil para ver cómo se dibuja tu trayectoria con escalado dinámico.</p>
+    <canvas id="canvas"></canvas>
 
     <script>
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
 
+        // Ajustar el tamaño del canvas a la pantalla
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            drawPath(); // Redibuja la trayectoria después de redimensionar
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
         // Configuración inicial
         let position = { x: 0, y: 0 }; // Posición inicial en "metros"
         let velocity = { x: 0, y: 0 }; // Velocidad inicial
-        let lastUpdate = Date.now(); // Tiempo de la última actualización
-        const scaleFactor = 50; // Relación inicial: 50 píxeles = 1 metro
-        let path = [{ x: 0, y: 0 }]; // Registro de posiciones
-        let bounds = { minX: 0, minY: 0, maxX: 0, maxY: 0 }; // Límites del dibujo
+        let lastUpdate = Date.now();
+        const path = [{ x: position.x, y: position.y }]; // Registro de posiciones en metros
+        const scale = 50; // Relación inicial: 50 píxeles = 1 metro
+        const threshold = 0.02; // Umbral para filtrar el ruido
 
-        // Dibuja la trayectoria ajustada al canvas
+        // Límites para escalado automático
+        let bounds = { minX: position.x, minY: position.y, maxX: position.x, maxY: position.y };
+
+        // Filtro de paso bajo para suavizar lecturas
+        function applyLowPassFilter(value, lastValue, alpha = 0.1) {
+            return lastValue + alpha * (value - lastValue);
+        }
+
+        let acceleration = { x: 0, y: 0 };
+
+        // Dibuja la trayectoria y la leyenda
         function drawPath() {
-            const width = canvas.width;
-            const height = canvas.height;
+            // Limpia el canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
 
             // Calcula los límites actuales
             const pathWidth = bounds.maxX - bounds.minX;
             const pathHeight = bounds.maxY - bounds.minY;
 
-            // Calcula el factor de escala dinámico
-            const scaleX = width / pathWidth;
-            const scaleY = height / pathHeight;
-            const scale = Math.min(scaleX, scaleY) * 0.9; // Escala para ajustarse al canvas con margen
+            // Ajusta la escala para incluir todo el recorrido
+            const scaleX = canvas.width / pathWidth;
+            const scaleY = canvas.height / pathHeight;
+            const dynamicScale = Math.min(scaleX, scaleY) * 0.9;
 
-            // Centro de la vista ajustada
-            const offsetX = (width - pathWidth * scale) / 2 - bounds.minX * scale;
-            const offsetY = (height - pathHeight * scale) / 2 - bounds.minY * scale;
+            const offsetX = (canvas.width - pathWidth * dynamicScale) / 2 - bounds.minX * dynamicScale;
+            const offsetY = (canvas.height - pathHeight * dynamicScale) / 2 - bounds.minY * dynamicScale;
 
-            // Limpia el canvas
-            ctx.clearRect(0, 0, width, height);
-
-            // Dibuja la trayectoria
             ctx.beginPath();
             ctx.strokeStyle = "blue";
             ctx.lineWidth = 2;
 
             path.forEach((point, index) => {
-                const x = point.x * scale + offsetX;
-                const y = point.y * scale + offsetY;
+                const x = point.x * dynamicScale + offsetX;
+                const y = point.y * dynamicScale + offsetY;
                 if (index === 0) {
                     ctx.moveTo(x, y);
                 } else {
@@ -71,41 +81,63 @@
             });
 
             ctx.stroke();
+
+            // Dibuja la leyenda en metros
+            ctx.fillStyle = "black";
+            ctx.font = "16px Arial";
+            const legendScale = 1; // 1 metro
+            const legendWidth = legendScale * dynamicScale; // Ancho en píxeles para la escala
+            const legendHeight = 10;
+
+            // Dibuja una barra de escala en la parte inferior izquierda
+            const legendX = 20;
+            const legendY = canvas.height - 40;
+            ctx.fillRect(legendX, legendY, legendWidth, legendHeight);
+
+            // Etiqueta de la escala
+            ctx.fillText(`${legendScale} m`, legendX + legendWidth + 10, legendY + legendHeight - 2);
         }
 
-        // Procesa los datos de movimiento
+        // Procesar datos de movimiento
         window.addEventListener('devicemotion', (event) => {
-            const acceleration = event.acceleration;
             const currentTime = Date.now();
             const deltaTime = (currentTime - lastUpdate) / 1000; // Diferencia de tiempo en segundos
             lastUpdate = currentTime;
 
-            if (acceleration.x !== null && acceleration.y !== null) {
-                // Calcula la velocidad usando la aceleración (v = u + at)
-                velocity.x += acceleration.x * deltaTime;
-                velocity.y += acceleration.y * deltaTime;
+            if (event.acceleration.x !== null && event.acceleration.y !== null) {
+                // Filtrar el ruido en la aceleración
+                acceleration.x = applyLowPassFilter(event.acceleration.x, acceleration.x);
+                acceleration.y = applyLowPassFilter(event.acceleration.y, acceleration.y);
 
-                // Calcula el cambio de posición (s = v * t)
-                const deltaX = velocity.x * deltaTime;
-                const deltaY = velocity.y * deltaTime;
+                // Ignorar movimientos menores al umbral
+                if (Math.abs(acceleration.x) < threshold && Math.abs(acceleration.y) < threshold) {
+                    return;
+                }
 
-                // Actualiza la posición en "metros"
+                // Calcular el desplazamiento
+                const deltaX = acceleration.x * deltaTime * deltaTime * scale;
+                const deltaY = acceleration.y * deltaTime * deltaTime * scale;
+
+                // Actualizar posición
                 position.x += deltaX;
                 position.y += deltaY;
 
-                // Registra la nueva posición
+                // Registrar la nueva posición
                 path.push({ x: position.x, y: position.y });
 
-                // Actualiza los límites del recorrido
+                // Actualizar los límites
                 bounds.minX = Math.min(bounds.minX, position.x);
                 bounds.minY = Math.min(bounds.minY, position.y);
                 bounds.maxX = Math.max(bounds.maxX, position.x);
                 bounds.maxY = Math.max(bounds.maxY, position.y);
 
-                // Redibuja la trayectoria con el nuevo escalado
+                // Redibujar la trayectoria
                 drawPath();
             }
         });
+
+        // Dibuja la trayectoria inicial
+        drawPath();
     </script>
 </body>
 </html>
