@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Movimiento en un Plano</title>
+    <style>
+        canvas {
+            border: 1px solid black;
+            display: block;
+            margin: 20px auto;
+        }
+    </style>
+</head>
+<body>
+    <h1 style="text-align: center;">Movimiento en el Plano</h1>
+    <canvas id="canvas" width="500" height="500"></canvas>
+    <p style="text-align: center;">Mueve el dispositivo para ver cómo se rastrea tu posición.</p>
+
+    <script>
+        // Configuración inicial
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        let position = { x: canvas.width / 2, y: canvas.height / 2 }; // Posición inicial (centro del canvas)
+        let velocity = { x: 0, y: 0 }; // Velocidad inicial
+        let orientation = 0; // Orientación en radianes (0 es hacia la derecha)
+        const scale = 5; // Escala para los movimientos
+
+        // Dibuja el punto inicial
+        function drawPoint(x, y) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height); // Limpia el canvas
+            ctx.beginPath();
+            ctx.arc(x, y, 5, 0, Math.PI * 2);
+            ctx.fillStyle = 'blue';
+            ctx.fill();
+            ctx.closePath();
+        }
+
+        // Procesa los datos de movimiento
+        window.addEventListener('devicemotion', (event) => {
+            const acceleration = event.acceleration;
+            const rotationRate = event.rotationRate;
+
+            // Actualiza la orientación basada en el giroscopio
+            if (rotationRate && rotationRate.alpha) {
+                orientation += (rotationRate.alpha * Math.PI / 180) * 0.01; // Convertimos a radianes y ajustamos la sensibilidad
+            }
+
+            // Calcula el cambio de posición basado en la aceleración
+            if (acceleration.x && acceleration.y) {
+                velocity.x += acceleration.x * scale;
+                velocity.y += acceleration.y * scale;
+
+                // Actualiza la posición en el plano
+                position.x += Math.cos(orientation) * velocity.x;
+                position.y += Math.sin(orientation) * velocity.y;
+
+                // Asegúrate de que no se salga del canvas
+                position.x = Math.max(0, Math.min(canvas.width, position.x));
+                position.y = Math.max(0, Math.min(canvas.height, position.y));
+
+                // Dibuja la nueva posición
+                drawPoint(position.x, position.y);
+            }
+        });
+
+        // Dibuja el punto inicial
+        drawPoint(position.x, position.y);
+    </script>
+</body>
+</html>
