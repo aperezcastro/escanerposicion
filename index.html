@@ -1,8 +1,7 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mapa de Movimiento</title>
     <style>
         body {
@@ -23,12 +22,10 @@
         const ctx = canvas.getContext('2d');
 
         // Configuración inicial
-        let position = { x: 0, y: 0 }; // Posición inicial en "metros"
-        let velocity = { x: 0, y: 0 }; // Velocidad inicial
-        let lastUpdate = Date.now();
-        const path = [{ x: position.x, y: position.y }]; // Registro de posiciones en metros
-        const scale = 50; // Relación inicial: 50 píxeles = 1 metro
-        const threshold = 0.02; // Umbral para filtrar el ruido
+        let position = { x: 0, y: 0 }; // Posición inicial en metros
+        let lastUpdate = null;
+        const path = [{ x: position.x, y: position.y }]; // Registro de posiciones
+        const threshold = 0.2; // Umbral para filtrar el ruido
 
         // Límites para escalado automático
         let bounds = {
@@ -38,32 +35,175 @@
             maxY: position.y
         };
 
-        let acceleration = { x: 0, y: 0 };
-        let orientation = 0; // Orientación en grados
+        let acceleration = { x: 0, y: 0, z: 0 };
+        let velocity = { x: 0, y: 0, z: 0 };
+        let rotationMatrix = [[1,0,0],[0,1,0],[0,0,1]]; // Matriz de rotación
 
-        // Ajustar el tamaño del canvas a la pantalla
+        // Función para ajustar el tamaño del canvas
         function resizeCanvas() {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
-            drawPath(); // Redibuja la trayectoria después de redimensionar
+            drawPath();
         }
         window.addEventListener('resize', resizeCanvas);
         resizeCanvas();
 
-        // Filtro de paso bajo para suavizar lecturas
-        function applyLowPassFilter(value, lastValue, alpha = 0.1) {
-            return lastValue + alpha * (value - lastValue);
+        // Solicitar permisos para acceder a los sensores
+        function requestSensorPermissions() {
+            function onDeviceMotion(event) {
+                handleDeviceMotion(event);
+            }
+            function onDeviceOrientation(event) {
+                handleDeviceOrientation(event);
+            }
+
+            if (typeof DeviceMotionEvent.requestPermission === 'function') {
+                // iOS 13+
+                DeviceMotionEvent.requestPermission()
+                    .then(response => {
+                        if (response === 'granted') {
+                            window.addEventListener('devicemotion', onDeviceMotion);
+                        } else {
+                            alert('Permiso denegado para acceder al acelerómetro.');
+                        }
+                    })
+                    .catch(console.error);
+            } else {
+                // Otros dispositivos
+                window.addEventListener('devicemotion', onDeviceMotion);
+            }
+
+            if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                // iOS 13+
+                DeviceOrientationEvent.requestPermission()
+                    .then(response => {
+                        if (response === 'granted') {
+                            window.addEventListener('deviceorientation', onDeviceOrientation);
+                        } else {
+                            alert('Permiso denegado para acceder a la orientación del dispositivo.');
+                        }
+                    })
+                    .catch(console.error);
+            } else {
+                window.addEventListener('deviceorientation', onDeviceOrientation);
+            }
         }
 
-        // Convierte aceleración relativa a global
-        function transformToGlobalCoordinates(ax, ay, orientation) {
-            const rad = (Math.PI / 180) * orientation; // Convierte orientación a radianes
-            const gx = ax * Math.cos(rad) - ay * Math.sin(rad); // Transformación
-            const gy = ax * Math.sin(rad) + ay * Math.cos(rad);
-            return { x: gx, y: gy };
+        // Manejar datos de aceleración
+        function handleDeviceMotion(event) {
+            const currentTime = Date.now();
+            if (lastUpdate === null) {
+                lastUpdate = currentTime;
+                return;
+            }
+            const deltaTime = (currentTime - lastUpdate) / 1000; // En segundos
+            lastUpdate = currentTime;
+
+            if (event.accelerationIncludingGravity) {
+                // Obtener aceleración
+                acceleration.x = event.accelerationIncludingGravity.x;
+                acceleration.y = event.accelerationIncludingGravity.y;
+                acceleration.z = event.accelerationIncludingGravity.z;
+
+                // Filtrar movimientos pequeños
+                const accMagnitude = Math.sqrt(acceleration.x**2 + acceleration.y**2 + acceleration.z**2);
+                if (accMagnitude < threshold) {
+                    // Reiniciar velocidad para limitar la deriva
+                    velocity.x = 0;
+                    velocity.y = 0;
+                    velocity.z = 0;
+                    return;
+                }
+
+                // Transformar aceleración a coordenadas globales
+                const globalAcc = transformToGlobalCoordinates(acceleration, rotationMatrix);
+
+                // Integrar para obtener velocidad
+                velocity.x += globalAcc.x * deltaTime;
+                velocity.y += globalAcc.y * deltaTime;
+                velocity.z += globalAcc.z * deltaTime;
+
+                // Integrar para obtener posición
+                position.x += velocity.x * deltaTime;
+                position.y += velocity.y * deltaTime;
+
+                // Registrar la nueva posición
+                path.push({ x: position.x, y: position.y });
+
+                // Actualizar los límites
+                bounds.minX = Math.min(bounds.minX, position.x);
+                bounds.minY = Math.min(bounds.minY, position.y);
+                bounds.maxX = Math.max(bounds.maxX, position.x);
+                bounds.maxY = Math.max(bounds.maxY, position.y);
+
+                // Redibujar
+                drawPath();
+            }
         }
 
-        // Dibuja la trayectoria y la leyenda
+        // Manejar datos de orientación
+        function handleDeviceOrientation(event) {
+            // Convertir los ángulos a radianes
+            const alpha = (event.alpha || 0) * Math.PI / 180; // Rotación alrededor del eje Z
+            const beta = (event.beta || 0) * Math.PI / 180;   // Rotación alrededor del eje X
+            const gamma = (event.gamma || 0) * Math.PI / 180; // Rotación alrededor del eje Y
+
+            // Calcular la matriz de rotación
+            rotationMatrix = getRotationMatrix(alpha, beta, gamma);
+        }
+
+        // Calcular la matriz de rotación
+        function getRotationMatrix(alpha, beta, gamma) {
+            // Matrices de rotación individuales
+            const Rz = [
+                [Math.cos(alpha), -Math.sin(alpha), 0],
+                [Math.sin(alpha),  Math.cos(alpha), 0],
+                [0,                0,               1]
+            ];
+
+            const Rx = [
+                [1, 0,               0              ],
+                [0, Math.cos(beta), -Math.sin(beta)],
+                [0, Math.sin(beta),  Math.cos(beta)]
+            ];
+
+            const Ry = [
+                [ Math.cos(gamma), 0, Math.sin(gamma)],
+                [ 0,              1, 0              ],
+                [-Math.sin(gamma), 0, Math.cos(gamma)]
+            ];
+
+            // Matriz de rotación completa R = Rz * Ry * Rx
+            return multiplyMatrices(Rz, multiplyMatrices(Ry, Rx));
+        }
+
+        // Multiplicar matrices 3x3
+        function multiplyMatrices(a, b) {
+            const result = [];
+            for (let i = 0; i < 3; i++) {
+                result[i] = [];
+                for (let j = 0; j < 3; j++) {
+                    result[i][j] = 0;
+                    for (let k = 0; k < 3; k++) {
+                        result[i][j] += a[i][k] * b[k][j];
+                    }
+                }
+            }
+            return result;
+        }
+
+        // Transformar aceleración a coordenadas globales
+        function transformToGlobalCoordinates(accel, rotationMatrix) {
+            const accVector = [accel.x, accel.y, accel.z];
+            const globalAcc = {
+                x: rotationMatrix[0][0] * accVector[0] + rotationMatrix[0][1] * accVector[1] + rotationMatrix[0][2] * accVector[2],
+                y: rotationMatrix[1][0] * accVector[0] + rotationMatrix[1][1] * accVector[1] + rotationMatrix[1][2] * accVector[2],
+                z: rotationMatrix[2][0] * accVector[0] + rotationMatrix[2][1] * accVector[1] + rotationMatrix[2][2] * accVector[2]
+            };
+            return globalAcc;
+        }
+
+        // Dibujar la trayectoria
         function drawPath() {
             // Limpia el canvas
             ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -71,6 +211,11 @@
             // Calcula los límites actuales
             const pathWidth = bounds.maxX - bounds.minX;
             const pathHeight = bounds.maxY - bounds.minY;
+
+            // Evitar división por cero
+            if (pathWidth === 0 || pathHeight === 0) {
+                return;
+            }
 
             // Ajusta la escala para incluir todo el recorrido
             const scaleX = canvas.width / pathWidth;
@@ -112,54 +257,9 @@
             ctx.fillText(`${legendScale} m`, legendX + legendWidth + 10, legendY + legendHeight - 2);
         }
 
-        // Procesar datos de movimiento
-        window.addEventListener('devicemotion', (event) => {
-            const currentTime = Date.now();
-            const deltaTime = (currentTime - lastUpdate) / 1000; // Diferencia de tiempo en segundos
-            lastUpdate = currentTime;
+        // Iniciar la aplicación
+        requestSensorPermissions();
 
-            if (event.acceleration.x !== null && event.acceleration.y !== null) {
-                // Filtrar el ruido en la aceleración
-                acceleration.x = applyLowPassFilter(event.acceleration.x, acceleration.x);
-                acceleration.y = applyLowPassFilter(event.acceleration.y, acceleration.y);
-
-                // Ignorar movimientos menores al umbral
-                if (Math.abs(acceleration.x) < threshold && Math.abs(acceleration.y) < threshold) {
-                    return;
-                }
-
-                // Transformar aceleración a coordenadas globales
-                const globalAcc = transformToGlobalCoordinates(acceleration.x, acceleration.y, orientation);
-
-                // Calcular el desplazamiento
-                const deltaX = globalAcc.x * deltaTime * deltaTime * scale;
-                const deltaY = globalAcc.y * deltaTime * deltaTime * scale;
-
-                // Actualizar posición
-                position.x += deltaX;
-                position.y += deltaY;
-
-                // Registrar la nueva posición
-                path.push({ x: position.x, y: position.y });
-
-                // Actualizar los límites
-                bounds.minX = Math.min(bounds.minX, position.x);
-                bounds.minY = Math.min(bounds.minY, position.y);
-                bounds.maxX = Math.max(bounds.maxX, position.x);
-                bounds.maxY = Math.max(bounds.maxY, position.y);
-
-                // Redibujar la trayectoria
-                drawPath();
-            }
-        });
-
-        // Obtener orientación del dispositivo
-        window.addEventListener('deviceorientation', (event) => {
-            orientation = event.alpha || 0; // Orientación en grados
-        });
-
-        // Dibuja la trayectoria inicial
-        drawPath();
     </script>
 </body>
 </html>
