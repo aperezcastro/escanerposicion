@@ -6,9 +6,24 @@
     <style>
         body { margin: 0; overflow: hidden; }
         canvas { display: block; }
+        #info {
+            position: absolute;
+            top: 0;
+            left: 0;
+            background-color: rgba(255, 255, 255, 0.8);
+            padding: 10px;
+            font-family: Arial, sans-serif;
+            font-size: 14px;
+        }
     </style>
 </head>
 <body>
+<div id="info">
+    <h3>Datos en tiempo real</h3>
+    <p>Posición: (<span id="posX">0</span>, <span id="posY">0</span>) metros</p>
+    <p>Velocidad: (<span id="velX">0</span>, <span id="velY">0</span>) m/s</p>
+    <p>Aceleración: (<span id="accX">0</span>, <span id="accY">0</span>) m/s²</p>
+</div>
 <canvas id="canvas"></canvas>
 <script>
     // Obtener el canvas y ajustar su tamaño
@@ -16,17 +31,28 @@
     let ctx = canvas.getContext('2d');
     let width = canvas.width = window.innerWidth;
     let height = canvas.height = window.innerHeight;
+    
+    // Variables de posición y escala
+    let positions = [];
+    let x = 0, y = 0; // Posición en metros
+    let scale = 1; // Escala para ajustar al canvas
+    let offsetX = width / 2;
+    let offsetY = height / 2;
 
-    // Posición inicial en el centro del canvas
-    let x = width / 2;
-    let y = height / 2;
-
-    let lastTime = null;
+    // Variables de velocidad y aceleración
     let vx = 0, vy = 0;
     let ax = 0, ay = 0;
     let orientation = 0;
-    let scale = 50; // Ajusta este valor para cambiar la escala en metros
+    let lastTime = null;
     let alpha = 0.9; // Factor para el filtro complementario
+
+    // Elementos para mostrar los datos
+    let posXElem = document.getElementById('posX');
+    let posYElem = document.getElementById('posY');
+    let velXElem = document.getElementById('velX');
+    let velYElem = document.getElementById('velY');
+    let accXElem = document.getElementById('accX');
+    let accYElem = document.getElementById('accY');
 
     // Solicitar permiso para acceder a los sensores (iOS 13+)
     function requestPermissions() {
@@ -81,6 +107,10 @@
             ax = alpha * ax + (1 - alpha) * axRaw;
             ay = alpha * ay + (1 - alpha) * ayRaw;
 
+            // Actualizar los elementos HTML con los datos de aceleración
+            accXElem.textContent = ax.toFixed(2);
+            accYElem.textContent = ay.toFixed(2);
+
             // Convertir orientación a radianes
             let angleRad = orientation * Math.PI / 180;
 
@@ -92,21 +122,73 @@
             vx += axGlobal * dt;
             vy += ayGlobal * dt;
 
-            // Integrar la velocidad para obtener la posición
-            x += vx * dt * scale;
-            y += vy * dt * scale;
+            // Actualizar los elementos HTML con los datos de velocidad
+            velXElem.textContent = vx.toFixed(2);
+            velYElem.textContent = vy.toFixed(2);
 
-            // Dibujar la línea
-            ctx.lineTo(x, y);
+            // Integrar la velocidad para obtener la posición
+            x += vx * dt;
+            y += vy * dt;
+
+            // Guardar las posiciones para ajustar la escala
+            positions.push({ x: x, y: y });
+
+            // Actualizar los elementos HTML con los datos de posición
+            posXElem.textContent = x.toFixed(2);
+            posYElem.textContent = y.toFixed(2);
+
+            // Ajustar escala y offset para mantener el dibujo dentro del canvas
+            adjustScaleAndOffset();
+
+            // Limpiar el canvas
+            ctx.clearRect(0, 0, width, height);
+
+            // Dibujar la trayectoria
+            ctx.beginPath();
+            for (let i = 0; i < positions.length; i++) {
+                let px = positions[i].x * scale + offsetX;
+                let py = positions[i].y * scale + offsetY;
+                if (i === 0) {
+                    ctx.moveTo(px, py);
+                } else {
+                    ctx.lineTo(px, py);
+                }
+            }
             ctx.strokeStyle = 'blue';
             ctx.lineWidth = 2;
             ctx.stroke();
-        } else {
-            ctx.beginPath();
-            ctx.moveTo(x, y);
+
         }
         lastTime = currentTime;
     }
+
+    function adjustScaleAndOffset() {
+        // Calcular los límites de las posiciones
+        let minX = Math.min(...positions.map(p => p.x));
+        let maxX = Math.max(...positions.map(p => p.x));
+        let minY = Math.min(...positions.map(p => p.y));
+        let maxY = Math.max(...positions.map(p => p.y));
+
+        let dataWidth = maxX - minX;
+        let dataHeight = maxY - minY;
+
+        // Agregar un margen
+        let margin = 20;
+
+        // Calcular la escala para ajustar al canvas
+        scale = Math.min(
+            (width - 2 * margin) / dataWidth || 1,
+            (height - 2 * margin) / dataHeight || 1
+        );
+
+        // Evitar escalas demasiado grandes
+        scale = Math.min(scale, 100);
+
+        // Calcular el offset para centrar el dibujo
+        offsetX = - (minX + maxX) / 2 * scale + width / 2;
+        offsetY = - (minY + maxY) / 2 * scale + height / 2;
+    }
+
 </script>
 </body>
 </html>
