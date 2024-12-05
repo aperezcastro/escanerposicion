@@ -22,15 +22,6 @@
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
 
-        // Ajustar el tamaño del canvas a la pantalla
-        function resizeCanvas() {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
-            drawPath(); // Redibuja la trayectoria después de redimensionar
-        }
-        window.addEventListener('resize', resizeCanvas);
-        resizeCanvas();
-
         // Configuración inicial
         let position = { x: 0, y: 0 }; // Posición inicial en "metros"
         let velocity = { x: 0, y: 0 }; // Velocidad inicial
@@ -39,8 +30,22 @@
         const scale = 50; // Relación inicial: 50 píxeles = 1 metro
         const threshold = 0.02; // Umbral para filtrar el ruido
 
-        // Límites para escalado automático
-        let bounds = { minX: position.x, minY: position.y, maxX: position.x, maxY: position.y };
+        // Límites para escalado automático (deben inicializarse antes de su uso)
+        let bounds = {
+            minX: position.x,
+            minY: position.y,
+            maxX: position.x,
+            maxY: position.y
+        };
+
+        // Ajustar el tamaño del canvas a la pantalla
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            drawPath(); // Redibuja la trayectoria después de redimensionar
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
 
         // Filtro de paso bajo para suavizar lecturas
         function applyLowPassFilter(value, lastValue, alpha = 0.1) {
