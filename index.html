@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Mapa de mi casa - Pedometría mejorada</title>
+    <title>Mapa de mi casa - Versión 1.1</title>
     <style>
         body { margin: 0; overflow: hidden; }
         canvas { display: block; }
@@ -19,7 +19,7 @@
 </head>
 <body>
 <div id="info">
-    <h3>Datos en tiempo real</h3>
+    <h3>Datos en tiempo real - Versión 1.1</h3>
     <p>Pasos: <span id="steps">0</span></p>
     <p>Distancia: <span id="distance">0</span> metros</p>
 </div>
@@ -45,10 +45,10 @@
     
     // Variables para detección de pasos
     let accMagnitudes = [];
-    let accWindowSize = 5; // Tamaño de la ventana para el filtro
-    let threshold = 1.2; // Umbral inicial para detección de pasos
+    let accWindowSize = 50; // Tamaño de la ventana para el cálculo del umbral
+    let threshold = null; // Umbral dinámico
     let lastStepTime = 0;
-    let stepDelay = 300; // Tiempo mínimo entre pasos en ms
+    let stepDelay = 400; // Tiempo mínimo entre pasos en ms
 
     // Variables para orientación
     let heading = 0; // Rumbo en radianes
@@ -112,49 +112,59 @@
             accMagnitudes.shift();
         }
 
-        // Aplicar un filtro de paso bajo (media móvil)
-        let accFiltered = accMagnitudes.reduce((a, b) => a + b, 0) / accMagnitudes.length;
+        // Calcular el umbral dinámico basado en el ruido de fondo
+        if (threshold === null && accMagnitudes.length === accWindowSize) {
+            // Asumimos que el dispositivo está en reposo al inicio
+            let mean = accMagnitudes.reduce((a, b) => a + b, 0) / accMagnitudes.length;
+            let variance = accMagnitudes.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / accMagnitudes.length;
+            let stdDev = Math.sqrt(variance);
+            threshold = mean + stdDev * 2; // Establecer el umbral por encima del ruido normal
+            console.log('Umbral establecido en:', threshold.toFixed(2));
+            alert('Calibración completada. Puedes empezar a caminar.');
+        }
 
-        // Detección de picos
-        let currentTime = Date.now();
-        if (accFiltered > threshold && (currentTime - lastStepTime > stepDelay)) {
-            steps++;
-            lastStepTime = currentTime;
-            distance = steps * stepLength;
+        if (threshold !== null) {
+            // Detección de picos
+            let currentTime = Date.now();
+            if (accMagnitude > threshold && (currentTime - lastStepTime > stepDelay)) {
+                steps++;
+                lastStepTime = currentTime;
+                distance = steps * stepLength;
 
-            // Convertir el heading a radianes y ajustar
-            let headingRad = heading * Math.PI / 180;
+                // Convertir el heading a radianes y ajustar
+                let headingRad = heading * Math.PI / 180;
 
-            // Actualizar la posición en función del heading
-            x += stepLength * Math.sin(headingRad);
-            y -= stepLength * Math.cos(headingRad); // Restar porque el eje Y en pantalla va hacia abajo
+                // Actualizar la posición en función del heading
+                x += stepLength * Math.sin(headingRad);
+                y -= stepLength * Math.cos(headingRad); // Restar porque el eje Y en pantalla va hacia abajo
 
-            positions.push({ x: x, y: y });
+                positions.push({ x: x, y: y });
 
-            // Actualizar los elementos HTML
-            stepsElem.textContent = steps;
-            distanceElem.textContent = distance.toFixed(2);
+                // Actualizar los elementos HTML
+                stepsElem.textContent = steps;
+                distanceElem.textContent = distance.toFixed(2);
 
-            // Ajustar escala y offset
-            adjustScaleAndOffset();
+                // Ajustar escala y offset
+                adjustScaleAndOffset();
 
-            // Limpiar el canvas
-            ctx.clearRect(0, 0, width, height);
+                // Limpiar el canvas
+                ctx.clearRect(0, 0, width, height);
 
-            // Dibujar la trayectoria
-            ctx.beginPath();
-            for (let i = 0; i < positions.length; i++) {
-                let px = positions[i].x * scale + offsetX;
-                let py = positions[i].y * scale + offsetY;
-                if (i === 0) {
-                    ctx.moveTo(px, py);
-                } else {
-                    ctx.lineTo(px, py);
+                // Dibujar la trayectoria
+                ctx.beginPath();
+                for (let i = 0; i < positions.length; i++) {
+                    let px = positions[i].x * scale + offsetX;
+                    let py = positions[i].y * scale + offsetY;
+                    if (i === 0) {
+                        ctx.moveTo(px, py);
+                    } else {
+                        ctx.lineTo(px, py);
+                    }
                 }
+                ctx.strokeStyle = 'blue';
+                ctx.lineWidth = 2;
+                ctx.stroke();
             }
-            ctx.strokeStyle = 'blue';
-            ctx.lineWidth = 2;
-            ctx.stroke();
         }
     }
 
