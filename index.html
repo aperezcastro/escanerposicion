@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Mapa de mi casa - Pedómetro</title>
+    <title>Mapa de mi casa - Pedometría mejorada</title>
     <style>
         body { margin: 0; overflow: hidden; }
         canvas { display: block; }
@@ -34,7 +34,7 @@
     // Variables de posición y escala
     let positions = [{ x: 0, y: 0 }];
     let x = 0, y = 0; // Posición en metros
-    let scale = 50; // Escala para ajustar al canvas
+    let scale = 1; // Escala para ajustar al canvas
     let offsetX = width / 2;
     let offsetY = height / 2;
 
@@ -42,8 +42,16 @@
     let steps = 0;
     let distance = 0;
     let stepLength = 0.7; // Longitud promedio del paso en metros (ajusta según tu altura)
-    let lastAcceleration = 0;
-    let threshold = 1.2; // Umbral para detección de pasos
+    
+    // Variables para detección de pasos
+    let accMagnitudes = [];
+    let accWindowSize = 5; // Tamaño de la ventana para el filtro
+    let threshold = 1.2; // Umbral inicial para detección de pasos
+    let lastStepTime = 0;
+    let stepDelay = 300; // Tiempo mínimo entre pasos en ms
+
+    // Variables para orientación
+    let heading = 0; // Rumbo en radianes
 
     // Elementos para mostrar los datos
     let stepsElem = document.getElementById('steps');
@@ -64,54 +72,118 @@
         } else {
             window.addEventListener('devicemotion', handleMotion);
         }
+
+        if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+            DeviceOrientationEvent.requestPermission()
+                .then(response => {
+                    if (response == 'granted') {
+                        window.addEventListener('deviceorientation', handleOrientation);
+                    } else {
+                        alert('Permiso denegado para acceder a la orientación.');
+                    }
+                })
+                .catch(console.error);
+        } else {
+            window.addEventListener('deviceorientation', handleOrientation);
+        }
     }
 
     requestPermissions();
 
+    function handleOrientation(event) {
+        // Obtener el ángulo alpha (rumbo) en grados
+        if (event.absolute || event.alpha !== null) {
+            heading = event.alpha; // En grados
+        }
+    }
+
     function handleMotion(event) {
-        // Aceleración total
+        // Aceleración total incluyendo gravedad
         let ax = event.accelerationIncludingGravity.x || 0;
         let ay = event.accelerationIncludingGravity.y || 0;
         let az = event.accelerationIncludingGravity.z || 0;
 
-        // Magnitud de la aceleración
+        // Calcular la magnitud de la aceleración
         let accMagnitude = Math.sqrt(ax * ax + ay * ay + az * az);
 
-        // Detección de pasos sencilla
-        if (accMagnitude - lastAcceleration > threshold) {
+        // Añadir la magnitud al array y mantener el tamaño de la ventana
+        accMagnitudes.push(accMagnitude);
+        if (accMagnitudes.length > accWindowSize) {
+            accMagnitudes.shift();
+        }
+
+        // Aplicar un filtro de paso bajo (media móvil)
+        let accFiltered = accMagnitudes.reduce((a, b) => a + b, 0) / accMagnitudes.length;
+
+        // Detección de picos
+        let currentTime = Date.now();
+        if (accFiltered > threshold && (currentTime - lastStepTime > stepDelay)) {
             steps++;
+            lastStepTime = currentTime;
             distance = steps * stepLength;
 
-            // Calcular la nueva posición (asumiendo movimiento en línea recta)
-            x += stepLength * Math.cos(0); // Ángulo fijo, podrías actualizarlo si tienes orientación
-            y += stepLength * Math.sin(0);
+            // Convertir el heading a radianes y ajustar
+            let headingRad = heading * Math.PI / 180;
+
+            // Actualizar la posición en función del heading
+            x += stepLength * Math.sin(headingRad);
+            y -= stepLength * Math.cos(headingRad); // Restar porque el eje Y en pantalla va hacia abajo
 
             positions.push({ x: x, y: y });
 
             // Actualizar los elementos HTML
             stepsElem.textContent = steps;
             distanceElem.textContent = distance.toFixed(2);
-        }
 
-        lastAcceleration = accMagnitude;
+            // Ajustar escala y offset
+            adjustScaleAndOffset();
 
-        // Limpiar el canvas
-        ctx.clearRect(0, 0, width, height);
+            // Limpiar el canvas
+            ctx.clearRect(0, 0, width, height);
 
-        // Dibujar la trayectoria
-        ctx.beginPath();
-        for (let i = 0; i < positions.length; i++) {
-            let px = positions[i].x * scale + offsetX;
-            let py = positions[i].y * scale + offsetY;
-            if (i === 0) {
-                ctx.moveTo(px, py);
-            } else {
-                ctx.lineTo(px, py);
+            // Dibujar la trayectoria
+            ctx.beginPath();
+            for (let i = 0; i < positions.length; i++) {
+                let px = positions[i].x * scale + offsetX;
+                let py = positions[i].y * scale + offsetY;
+                if (i === 0) {
+                    ctx.moveTo(px, py);
+                } else {
+                    ctx.lineTo(px, py);
+                }
             }
+            ctx.strokeStyle = 'blue';
+            ctx.lineWidth = 2;
+            ctx.stroke();
         }
-        ctx.strokeStyle = 'blue';
-        ctx.lineWidth = 2;
-        ctx.stroke();
+    }
+
+    function adjustScaleAndOffset() {
+        // Calcular los límites de las posiciones
+        let minX = Math.min(...positions.map(p => p.x));
+        let maxX = Math.max(...positions.map(p => p.x));
+        let minY = Math.min(...positions.map(p => p.y));
+        let maxY = Math.max(...positions.map(p => p.y));
+
+        let dataWidth = maxX - minX;
+        let dataHeight = maxY - minY;
+
+        // Agregar un margen
+        let margin = 20;
+
+        // Calcular la escala para ajustar al canvas
+        scale = Math.min(
+            (width - 2 * margin) / dataWidth || 1,
+            (height - 2 * margin) / dataHeight || 1
+        );
+
+        // Evitar escalas demasiado grandes o pequeñas
+        scale = Math.min(scale, 100);
+        scale = Math.max(scale, 1);
+
+        // Calcular el offset para centrar el dibujo
+        offsetX = - (minX + maxX) / 2 * scale + width / 2;
+        offsetY = - (minY + maxY) / 2 * scale + height / 2;
     }
 
 </script>
